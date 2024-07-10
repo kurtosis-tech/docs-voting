@@ -4,9 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/gin-gonic/gin"
-	"github.com/kurtosis-tech/stacktrace"
-	"github.com/sirupsen/logrus"
 	"log"
 	"net"
 	"net/http"
@@ -17,6 +14,11 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/kurtosis-tech/stacktrace"
+	cors "github.com/rs/cors/wrapper/gin"
+	"github.com/sirupsen/logrus"
 )
 
 const (
@@ -42,19 +44,20 @@ func NewVotingAppServer(ctx context.Context) (http.Handler, *logrus.Logger, erro
 	logger := setupLogrus()
 
 	router.Use(getLoggingMiddleware(logger))
+	router.Use(cors.Default())
 
-	router.GET("/health", getGinHandler(healthCheck, redis, ctx))
-	router.GET("/features", getGinHandler(getFeatures, redis, ctx))
-	router.POST("/upvote/:id", getGinHandler(upvoteFeature, redis, ctx))
-	router.POST("/downvote/:id", getGinHandler(downvoteFeature, redis, ctx))
+	router.GET("/health", getGinHandler(healthCheck, redis, ctx, logger))
+	router.GET("/features", getGinHandler(getFeatures, redis, ctx, logger))
+	router.POST("/upvote/:id", getGinHandler(upvoteFeature, redis, ctx, logger))
+	router.POST("/downvote/:id", getGinHandler(downvoteFeature, redis, ctx, logger))
 
 	return router.Handler(), logger, nil
 }
 
 // adapter to get redis connection inside api handlers
-func getGinHandler(handler func(c *gin.Context, rdb *RedisConnection, ctx context.Context), redis *RedisConnection, ctxWrap context.Context) func(ctx *gin.Context) {
+func getGinHandler(handler func(c *gin.Context, rdb *RedisConnection, ctx context.Context, logger *logrus.Logger), redis *RedisConnection, ctxWrap context.Context, logger *logrus.Logger) func(ctx *gin.Context) {
 	return func(c *gin.Context) {
-		handler(c, redis, ctxWrap)
+		handler(c, redis, ctxWrap, logger)
 	}
 }
 
@@ -144,11 +147,11 @@ type Feature struct {
 	Downvotes int    `json:"downvotes"`
 }
 
-func healthCheck(c *gin.Context, redisClient *RedisConnection, ctx context.Context) {
+func healthCheck(c *gin.Context, redisClient *RedisConnection, ctx context.Context, logger *logrus.Logger) {
 	c.JSON(http.StatusOK, gin.H{"message": "all good over here"})
 }
 
-func upvoteFeature(c *gin.Context, redisClient *RedisConnection, ctx context.Context) {
+func upvoteFeature(c *gin.Context, redisClient *RedisConnection, ctx context.Context, logger *logrus.Logger) {
 	featureName := c.Param("id")
 	if !isValidFeatureName(featureName) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid feature name"})
@@ -172,7 +175,7 @@ func upvoteFeature(c *gin.Context, redisClient *RedisConnection, ctx context.Con
 	c.JSON(http.StatusOK, gin.H{"message": "Successfully upvoted feature"})
 }
 
-func downvoteFeature(c *gin.Context, redisClient *RedisConnection, ctx context.Context) {
+func downvoteFeature(c *gin.Context, redisClient *RedisConnection, ctx context.Context, logger *logrus.Logger) {
 	featureName := c.Param("id")
 	if !isValidFeatureName(featureName) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid feature name"})
@@ -196,7 +199,7 @@ func downvoteFeature(c *gin.Context, redisClient *RedisConnection, ctx context.C
 	c.JSON(http.StatusOK, gin.H{"message": "Successfully downvoted feature"})
 }
 
-func getFeatures(c *gin.Context, redisClient *RedisConnection, ctx context.Context) {
+func getFeatures(c *gin.Context, redisClient *RedisConnection, ctx context.Context, logger *logrus.Logger) {
 	var cursor uint64
 	keys := make([]string, 0)
 	for {
